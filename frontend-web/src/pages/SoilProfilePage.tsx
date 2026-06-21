@@ -101,11 +101,60 @@ const SoilProfilePage: React.FC<SoilProfilePageProps> = ({ profileId, onNavigate
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [locating, setLocating] = useState(false);
+  const [locationLabel, setLocationLabel] = useState('');
 
   const isEdit = Boolean(profileId);
 
+  const detectLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser.');
+      return;
+    }
+    setLocating(true);
+    setLocationLabel('');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lon = pos.coords.longitude.toFixed(6);
+        setForm(prev => ({ ...prev, latitude: lat, longitude: lon }));
+        setFieldErrors(prev => ({ ...prev, latitude: undefined, longitude: undefined }));
+        // Reverse geocode using OpenStreetMap Nominatim (free, no key needed)
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`
+          );
+          const data = await res.json();
+          const addr = data.address;
+          const label = [
+            addr.village || addr.town || addr.city || addr.county,
+            addr.state_district || addr.district,
+            addr.state,
+          ].filter(Boolean).join(', ');
+          setLocationLabel(label || `${lat}, ${lon}`);
+        } catch {
+          setLocationLabel(`${lat}, ${lon}`);
+        }
+        setLocating(false);
+      },
+      (err) => {
+        setLocating(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setError('Location permission denied. Please allow location access in your browser.');
+        } else {
+          setError('Unable to detect location. Please enter coordinates manually.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   useEffect(() => {
-    if (!profileId) return;
+    if (!profileId) {
+      // Auto-detect live location on mount for new profiles
+      detectLocation();
+      return;
+    }
     setLoading(true);
     soilApi
       .get(profileId)
@@ -136,7 +185,6 @@ const SoilProfilePage: React.FC<SoilProfilePageProps> = ({ profileId, onNavigate
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
-    // Clear field error on change
     setFieldErrors((prev) => ({ ...prev, [name]: undefined }));
   };
 
@@ -222,36 +270,65 @@ const SoilProfilePage: React.FC<SoilProfilePageProps> = ({ profileId, onNavigate
           {fieldErrors.plotName && <p style={errorStyle}>{fieldErrors.plotName}</p>}
         </div>
 
-        {/* Latitude */}
-        <div style={fieldStyle}>
-          <label htmlFor="latitude" style={labelStyle}>Latitude</label>
-          <input
-            id="latitude"
-            name="latitude"
-            type="number"
-            step="any"
-            value={form.latitude}
-            onChange={handleChange}
-            placeholder="e.g. 30.7333"
-            style={inputStyle}
-          />
-          {fieldErrors.latitude && <p style={errorStyle}>{fieldErrors.latitude}</p>}
-        </div>
-
-        {/* Longitude */}
-        <div style={fieldStyle}>
-          <label htmlFor="longitude" style={labelStyle}>Longitude</label>
-          <input
-            id="longitude"
-            name="longitude"
-            type="number"
-            step="any"
-            value={form.longitude}
-            onChange={handleChange}
-            placeholder="e.g. 76.7794"
-            style={inputStyle}
-          />
-          {fieldErrors.longitude && <p style={errorStyle}>{fieldErrors.longitude}</p>}
+        {/* Location Detection */}
+        <div style={{ ...fieldStyle, background: '#f1f8e9', borderRadius: 8, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <label style={{ ...labelStyle, marginBottom: 0, fontWeight: 600 }}>📍 Field Location</label>
+            <button
+              type="button"
+              onClick={detectLocation}
+              disabled={locating}
+              style={{
+                background: 'var(--green-dark, #2e7d32)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                padding: '6px 14px',
+                fontSize: 13,
+                cursor: locating ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {locating ? '⏳ Detecting…' : '🎯 Detect My Location'}
+            </button>
+          </div>
+          {locationLabel && (
+            <div style={{ fontSize: 13, color: '#2e7d32', marginBottom: 8, fontStyle: 'italic' }}>
+              📌 {locationLabel}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label htmlFor="latitude" style={{ ...labelStyle, fontSize: 13 }}>Latitude</label>
+              <input
+                id="latitude"
+                name="latitude"
+                type="number"
+                step="any"
+                value={form.latitude}
+                onChange={handleChange}
+                placeholder="e.g. 30.7333"
+                style={{ ...inputStyle, fontSize: 14 }}
+              />
+              {fieldErrors.latitude && <p style={errorStyle}>{fieldErrors.latitude}</p>}
+            </div>
+            <div>
+              <label htmlFor="longitude" style={{ ...labelStyle, fontSize: 13 }}>Longitude</label>
+              <input
+                id="longitude"
+                name="longitude"
+                type="number"
+                step="any"
+                value={form.longitude}
+                onChange={handleChange}
+                placeholder="e.g. 76.7794"
+                style={{ ...inputStyle, fontSize: 14 }}
+              />
+              {fieldErrors.longitude && <p style={errorStyle}>{fieldErrors.longitude}</p>}
+            </div>
+          </div>
         </div>
 
         {/* Soil Type */}

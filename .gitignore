@@ -50,3 +50,10 @@ logs/
 
 # ── Kiro internal ─────────────────────────────────────────────────────────────
 .kiro/settings/
+
+# Frontend env (contains API keys)
+frontend-web/.env
+
+# Local database/mock data files
+backend/data/
+

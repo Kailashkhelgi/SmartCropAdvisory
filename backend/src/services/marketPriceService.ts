@@ -3,6 +3,7 @@ import Redis from 'ioredis';
 import { config } from '../config';
 import { query } from '../db';
 import { AppError } from './userService';
+import { getRedisClient } from '../redis';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ let _redis: Redis | null = null;
 
 function getRedis(): Redis {
   if (!_redis) {
-    _redis = new Redis(config.redisUrl);
+    _redis = getRedisClient() as Redis;
   }
   return _redis;
 }

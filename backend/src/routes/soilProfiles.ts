@@ -5,6 +5,7 @@ import {
   createSoilProfile,
   getSoilProfile,
   updateSoilProfile,
+  listSoilProfiles,
   SoilProfileData,
 } from '../services/soilProfileService';
 
@@ -32,6 +33,29 @@ router.post('/', async (req: Request, res: Response) => {
       } else {
         sendError(res, 500, err.code, err.message);
       }
+    } else {
+      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    }
+  }
+});
+
+/**
+ * GET /api/v1/soil-profiles
+ * Lists all soil profiles for the authenticated farmer.
+ */
+router.get('/', async (req: Request, res: Response) => {
+  const farmerId = req.farmerId;
+  if (!farmerId) {
+    sendError(res, 401, 'UNAUTHORIZED', 'Authentication required');
+    return;
+  }
+
+  try {
+    const profiles = await listSoilProfiles(farmerId);
+    sendSuccess(res, profiles);
+  } catch (err) {
+    if (err instanceof AppError) {
+      sendError(res, 500, err.code, err.message);
     } else {
       sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
     }

@@ -7,10 +7,11 @@ interface Props {
 }
 
 export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
-  const [mobileNumber, setMobileNumber] = useState('');
-  const [password, setPassword] = useState('');
+  const [mobileNumber, setMobileNumber] = useState(() => localStorage.getItem('savedMobile') ?? '');
+  const [password, setPassword] = useState(() => localStorage.getItem('savedPassword') ?? '');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('savedMobile'));
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -27,22 +28,40 @@ export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const err = validate();
-    if (err) { setError(err); return; }
+    // Read directly from form to handle browser autofill
+    const form = e.target as HTMLFormElement;
+    const mobileVal = (form.querySelector('#mobile') as HTMLInputElement)?.value || mobileNumber;
+    const passwordVal = (form.querySelector('#password') as HTMLInputElement)?.value || password;
+    
+    if (mobileVal !== mobileNumber) setMobileNumber(mobileVal);
+    if (passwordVal !== password) setPassword(passwordVal);
+
+    const cleanMobile = mobileVal.replace(/\D/g, '');
+    if (cleanMobile.length < 10) { setError('Enter a valid 10-digit mobile number'); return; }
+    if (!passwordVal) { setError('Password is required'); return; }
+    if (!isLogin && passwordVal.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (!isLogin && passwordVal !== confirmPassword) { setError('Passwords do not match'); return; }
 
     setLoading(true);
     setError('');
 
     try {
       const res = isLogin
-        ? await authApi.login(mobileNumber.trim(), password)
-        : await authApi.register(mobileNumber.trim(), password);
+        ? await authApi.login(mobileVal.trim(), passwordVal)
+        : await authApi.register(mobileVal.trim(), passwordVal);
 
       const { accessToken, refreshToken, farmerId } = res.data?.data ?? res.data;
       localStorage.setItem('accessToken', accessToken);
       localStorage.setItem('refreshToken', refreshToken);
       localStorage.setItem('farmerId', farmerId);
-      onNavigate('home');
+      if (rememberMe) {
+        localStorage.setItem('savedMobile', mobileVal.trim());
+        localStorage.setItem('savedPassword', passwordVal);
+      } else {
+        localStorage.removeItem('savedMobile');
+        localStorage.removeItem('savedPassword');
+      }
+      onNavigate('dashboard');
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: { message?: string } | string; message?: string } } };
       const errBody = e.response?.data?.error;
@@ -60,7 +79,7 @@ export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
       <div className="auth-card">
         <div className="auth-logo">
           <div className="logo-icon">🌿</div>
-          <h2>Smart Crop Advisory</h2>
+          <h2>AgriMedha</h2>
           <p>{isLogin ? 'Login to your account' : 'Create your free account'}</p>
         </div>
 
@@ -78,6 +97,7 @@ export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
               maxLength={13}
               required
               autoFocus
+              autoComplete="tel"
             />
           </div>
 
@@ -91,6 +111,7 @@ export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
                 onChange={e => { setPassword(e.target.value); setError(''); }}
                 placeholder={isLogin ? 'Enter your password' : 'Min 6 characters'}
                 required
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
                 style={{ paddingRight: '3rem' }}
               />
               <button
@@ -114,6 +135,13 @@ export default function RegisterPage({ onNavigate, mode = 'register' }: Props) {
                 placeholder="Re-enter your password"
                 required
               />
+            </div>
+          )}
+
+          {isLogin && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+              <input type="checkbox" id="rememberMe" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} />
+              <label htmlFor="rememberMe" style={{ color: '#555', cursor: 'pointer' }}>Remember me</label>
             </div>
           )}
 

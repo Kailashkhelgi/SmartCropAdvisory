@@ -69,7 +69,7 @@ apiClient.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null);
       localStorage.clear();
-      window.location.href = '/login';
+      // Don't hard redirect — let the app handle it via state
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
@@ -105,6 +105,9 @@ export const farmerApi = {
 
 // ── Soil Profiles ─────────────────────────────────────────────────────────────
 export const soilApi = {
+  list: () =>
+    apiClient.get('/soil-profiles'),
+
   create: (data: Record<string, unknown>) =>
     apiClient.post('/soil-profiles', data),
 

@@ -1,5 +1,11 @@
 import { query } from '../db';
 import { AppError } from './userService';
+import { v4 as uuidv4 } from 'uuid';
+import { loadStorage, saveSoilProfiles } from '../storage';
+
+// ─── Persistent storage for development (no database) ────────────────────────
+const storage = loadStorage();
+const soilProfiles = storage.soilProfiles;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +74,38 @@ function validateSoilProfileData(data: Partial<SoilProfileData>): void {
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /**
+ * List all soil profiles for a farmer.
+ */
+export async function listSoilProfiles(farmerId: string): Promise<SoilProfile[]> {
+  try {
+    // Check if farmer exists in database first
+    const farmerCheck = await query('SELECT 1 FROM farmers WHERE id = $1', [farmerId]);
+    if (farmerCheck.rows.length === 0) {
+      throw new Error('Farmer not found in database');
+    }
+
+    // Try database first
+    const result = await query<SoilProfileRow>(
+      'SELECT * FROM soil_profiles WHERE farmer_id = $1 ORDER BY created_at DESC',
+      [farmerId]
+    );
+
+    return result.rows.map(rowToSoilProfile);
+  } catch (dbErr) {
+    // Database not available - use in-memory storage
+    const profiles: SoilProfile[] = [];
+    soilProfiles.forEach(profile => {
+      if (profile.farmerId === farmerId) {
+        profiles.push(profile);
+      }
+    });
+    
+    // Sort by created date descending, safely parsing string dates if loaded from JSON
+    return profiles.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+}
+
+/**
  * Create a new soil profile for a farmer.
  * Validates pH is in [0, 14] and NPK values are non-negative.
  */
@@ -77,25 +115,54 @@ export async function createSoilProfile(
 ): Promise<SoilProfile> {
   validateSoilProfileData(data);
 
-  const result = await query<SoilProfileRow>(
-    `INSERT INTO soil_profiles
-       (farmer_id, plot_name, latitude, longitude, soil_type, ph, nitrogen, phosphorus, potassium)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING *`,
-    [
-      farmerId,
-      data.plotName ?? null,
-      data.latitude ?? null,
-      data.longitude ?? null,
-      data.soilType ?? null,
-      data.ph ?? null,
-      data.nitrogen ?? null,
-      data.phosphorus ?? null,
-      data.potassium ?? null,
-    ]
-  );
+  try {
+    // Check if farmer exists in database first
+    const farmerCheck = await query('SELECT 1 FROM farmers WHERE id = $1', [farmerId]);
+    if (farmerCheck.rows.length === 0) {
+      throw new Error('Farmer not found in database');
+    }
 
-  return rowToSoilProfile(result.rows[0]);
+    // Try database first
+    const result = await query<SoilProfileRow>(
+      `INSERT INTO soil_profiles
+         (farmer_id, plot_name, latitude, longitude, soil_type, ph, nitrogen, phosphorus, potassium)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        farmerId,
+        data.plotName ?? null,
+        data.latitude ?? null,
+        data.longitude ?? null,
+        data.soilType ?? null,
+        data.ph ?? null,
+        data.nitrogen ?? null,
+        data.phosphorus ?? null,
+        data.potassium ?? null,
+      ]
+    );
+
+    return rowToSoilProfile(result.rows[0]);
+  } catch (dbErr) {
+    // Database not available - use in-memory storage
+    const profile: SoilProfile = {
+      id: uuidv4(),
+      farmerId,
+      plotName: data.plotName,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      soilType: data.soilType,
+      ph: data.ph,
+      nitrogen: data.nitrogen,
+      phosphorus: data.phosphorus,
+      potassium: data.potassium,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    
+    soilProfiles.set(profile.id, profile);
+    saveSoilProfiles(soilProfiles);
+    return profile;
+  }
 }
 
 /**
@@ -110,63 +177,92 @@ export async function updateSoilProfile(
 ): Promise<SoilProfile> {
   validateSoilProfileData(data);
 
-  const setClauses: string[] = [];
-  const values: unknown[] = [];
-  let idx = 1;
+  try {
+    // Check if farmer exists in database first
+    const farmerCheck = await query('SELECT 1 FROM farmers WHERE id = $1', [farmerId]);
+    if (farmerCheck.rows.length === 0) {
+      throw new Error('Farmer not found in database');
+    }
 
-  if (data.plotName !== undefined) {
-    setClauses.push(`plot_name = $${idx++}`);
-    values.push(data.plotName);
-  }
-  if (data.latitude !== undefined) {
-    setClauses.push(`latitude = $${idx++}`);
-    values.push(data.latitude);
-  }
-  if (data.longitude !== undefined) {
-    setClauses.push(`longitude = $${idx++}`);
-    values.push(data.longitude);
-  }
-  if (data.soilType !== undefined) {
-    setClauses.push(`soil_type = $${idx++}`);
-    values.push(data.soilType);
-  }
-  if (data.ph !== undefined) {
-    setClauses.push(`ph = $${idx++}`);
-    values.push(data.ph);
-  }
-  if (data.nitrogen !== undefined) {
-    setClauses.push(`nitrogen = $${idx++}`);
-    values.push(data.nitrogen);
-  }
-  if (data.phosphorus !== undefined) {
-    setClauses.push(`phosphorus = $${idx++}`);
-    values.push(data.phosphorus);
-  }
-  if (data.potassium !== undefined) {
-    setClauses.push(`potassium = $${idx++}`);
-    values.push(data.potassium);
-  }
+    // Try database first
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
 
-  // Always bump updated_at
-  setClauses.push(`updated_at = now()`);
+    if (data.plotName !== undefined) {
+      setClauses.push(`plot_name = $${idx++}`);
+      values.push(data.plotName);
+    }
+    if (data.latitude !== undefined) {
+      setClauses.push(`latitude = $${idx++}`);
+      values.push(data.latitude);
+    }
+    if (data.longitude !== undefined) {
+      setClauses.push(`longitude = $${idx++}`);
+      values.push(data.longitude);
+    }
+    if (data.soilType !== undefined) {
+      setClauses.push(`soil_type = $${idx++}`);
+      values.push(data.soilType);
+    }
+    if (data.ph !== undefined) {
+      setClauses.push(`ph = $${idx++}`);
+      values.push(data.ph);
+    }
+    if (data.nitrogen !== undefined) {
+      setClauses.push(`nitrogen = $${idx++}`);
+      values.push(data.nitrogen);
+    }
+    if (data.phosphorus !== undefined) {
+      setClauses.push(`phosphorus = $${idx++}`);
+      values.push(data.phosphorus);
+    }
+    if (data.potassium !== undefined) {
+      setClauses.push(`potassium = $${idx++}`);
+      values.push(data.potassium);
+    }
 
-  // WHERE clause params
-  values.push(profileId);   // $idx
-  values.push(farmerId);    // $idx+1
+    // Always bump updated_at
+    setClauses.push(`updated_at = now()`);
 
-  const result = await query<SoilProfileRow>(
-    `UPDATE soil_profiles
-     SET ${setClauses.join(', ')}
-     WHERE id = $${idx} AND farmer_id = $${idx + 1}
-     RETURNING *`,
-    values
-  );
+    // WHERE clause params
+    values.push(profileId);   // $idx
+    values.push(farmerId);    // $idx+1
 
-  if (result.rows.length === 0) {
-    throw new AppError('NOT_FOUND', 'Soil profile not found');
+    const result = await query<SoilProfileRow>(
+      `UPDATE soil_profiles
+       SET ${setClauses.join(', ')}
+       WHERE id = $${idx} AND farmer_id = $${idx + 1}
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      throw new AppError('NOT_FOUND', 'Soil profile not found');
+    }
+
+    return rowToSoilProfile(result.rows[0]);
+  } catch (dbErr) {
+    // Database not available - use in-memory storage
+    const profile = soilProfiles.get(profileId);
+    
+    if (!profile || profile.farmerId !== farmerId) {
+      throw new AppError('NOT_FOUND', 'Soil profile not found');
+    }
+
+    // Update fields
+    if (data.plotName !== undefined) profile.plotName = data.plotName;
+    if (data.latitude !== undefined) profile.latitude = data.latitude;
+    if (data.longitude !== undefined) profile.longitude = data.longitude;
+    if (data.soilType !== undefined) profile.soilType = data.soilType;
+    if (data.ph !== undefined) profile.ph = data.ph;
+    if (data.nitrogen !== undefined) profile.nitrogen = data.nitrogen;
+    if (data.phosphorus !== undefined) profile.phosphorus = data.phosphorus;
+    if (data.potassium !== undefined) profile.potassium = data.potassium;
+    profile.updatedAt = new Date();
+    saveSoilProfiles(soilProfiles);
+    return profile;
   }
-
-  return rowToSoilProfile(result.rows[0]);
 }
 
 /**
@@ -177,16 +273,34 @@ export async function getSoilProfile(
   profileId: string,
   farmerId: string
 ): Promise<SoilProfile> {
-  const result = await query<SoilProfileRow>(
-    'SELECT * FROM soil_profiles WHERE id = $1',
-    [profileId]
-  );
+  try {
+    // Check if farmer exists in database first
+    const farmerCheck = await query('SELECT 1 FROM farmers WHERE id = $1', [farmerId]);
+    if (farmerCheck.rows.length === 0) {
+      throw new Error('Farmer not found in database');
+    }
 
-  if (result.rows.length === 0 || result.rows[0].farmer_id !== farmerId) {
-    throw new AppError('NOT_FOUND', 'Soil profile not found');
+    // Try database first
+    const result = await query<SoilProfileRow>(
+      'SELECT * FROM soil_profiles WHERE id = $1',
+      [profileId]
+    );
+
+    if (result.rows.length === 0 || result.rows[0].farmer_id !== farmerId) {
+      throw new AppError('NOT_FOUND', 'Soil profile not found');
+    }
+
+    return rowToSoilProfile(result.rows[0]);
+  } catch (dbErr) {
+    // Database not available - use in-memory storage
+    const profile = soilProfiles.get(profileId);
+    
+    if (!profile || profile.farmerId !== farmerId) {
+      throw new AppError('NOT_FOUND', 'Soil profile not found');
+    }
+
+    return profile;
   }
-
-  return rowToSoilProfile(result.rows[0]);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

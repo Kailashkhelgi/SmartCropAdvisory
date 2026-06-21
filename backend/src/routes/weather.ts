@@ -9,14 +9,9 @@ const router = Router();
  * GET /api/v1/weather
  * Returns current weather data for the given coordinates.
  * Query params: lat (required, number), lon (required, number)
+ * Note: Authentication is optional - weather data is publicly accessible
  */
 router.get('/', async (req: Request, res: Response) => {
-  const farmerId = req.farmerId;
-  if (!farmerId) {
-    sendError(res, 401, 'UNAUTHORIZED', 'Authentication required');
-    return;
-  }
-
   const { lat, lon } = req.query;
 
   if (lat === undefined || lat === '') {

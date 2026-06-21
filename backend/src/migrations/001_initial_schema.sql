@@ -3,7 +3,7 @@
 -- Requirements: 1.2, 2.1, 2.5, 9.2, 9.3
 
 -- farmers
-CREATE TABLE farmers (
+CREATE TABLE IF NOT EXISTS farmers (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   mobile_number   VARCHAR(15) UNIQUE NOT NULL,
   name            VARCHAR(100),
@@ -18,7 +18,7 @@ CREATE TABLE farmers (
 );
 
 -- soil_profiles
-CREATE TABLE soil_profiles (
+CREATE TABLE IF NOT EXISTS soil_profiles (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   farmer_id   UUID NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
   plot_name   VARCHAR(100),
@@ -34,7 +34,7 @@ CREATE TABLE soil_profiles (
 );
 
 -- crop_history
-CREATE TABLE crop_history (
+CREATE TABLE IF NOT EXISTS crop_history (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   farmer_id       UUID NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
   soil_profile_id UUID REFERENCES soil_profiles(id),
@@ -45,7 +45,7 @@ CREATE TABLE crop_history (
 );
 
 -- advisory_sessions
-CREATE TABLE advisory_sessions (
+CREATE TABLE IF NOT EXISTS advisory_sessions (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   farmer_hash    VARCHAR(64) NOT NULL,
   session_type   VARCHAR(30) NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE advisory_sessions (
 
 -- feedback
 -- dismissed column supports Requirement 9.5 (dismissed feedback not re-prompted)
-CREATE TABLE feedback (
+CREATE TABLE IF NOT EXISTS feedback (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   advisory_session_id UUID NOT NULL REFERENCES advisory_sessions(id),
   rating              SMALLINT CHECK (rating BETWEEN 1 AND 5),
@@ -65,7 +65,7 @@ CREATE TABLE feedback (
 );
 
 -- notifications
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   farmer_id   UUID NOT NULL REFERENCES farmers(id) ON DELETE CASCADE,
   type        VARCHAR(30) NOT NULL,

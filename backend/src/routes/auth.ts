@@ -1,78 +1,131 @@
 import { Router, Request, Response } from 'express';
-import Redis from 'ioredis';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { sendSuccess, sendError } from '../middleware/envelope';
-import { sendOtp, verifyOtp, AppError } from '../services/userService';
+import { loadStorage, saveUsers, saveRefreshTokens } from '../storage';
 
 const router = Router();
 
-// Redis singleton for refresh/logout operations
-let _redis: Redis | null = null;
-function getRedis(): Redis {
-  if (!_redis) {
-    _redis = new Redis(config.redisUrl);
-  }
-  return _redis;
+// Persistent storage for development
+interface UserData {
+  id: string;
+  mobileNumber: string;
+  password: string;
+  name?: string;
+  preferredLang?: string;
+  village?: string;
+  district?: string;
+  state?: string;
+  landSizeAcres?: number;
 }
+
+// Load data from persistent storage
+const storage = loadStorage();
+const users = storage.users;
+const usersById = storage.usersById;
+const refreshTokens = storage.refreshTokens;
+
+// Export users map so it can be accessed from app.ts
+export { users, usersById };
 
 /**
  * POST /api/v1/auth/register
- * Body: { mobileNumber: string }
- * Sends an OTP to the given mobile number.
+ * Body: { mobileNumber: string, password: string }
+ * Simple password-based registration for development
  */
 router.post('/register', async (req: Request, res: Response) => {
-  const { mobileNumber } = req.body as { mobileNumber?: string };
+  const { mobileNumber, password } = req.body as { mobileNumber?: string; password?: string };
 
-  if (!mobileNumber) {
-    sendError(res, 400, 'VALIDATION_ERROR', 'mobileNumber is required', 'mobileNumber');
+  if (!mobileNumber || !password) {
+    sendError(res, 400, 'VALIDATION_ERROR', 'mobileNumber and password are required');
     return;
   }
 
   try {
-    await sendOtp(mobileNumber);
-    sendSuccess(res, { message: 'OTP sent' });
-  } catch (err) {
-    if (err instanceof AppError) {
-      sendError(res, 503, err.code, err.message);
-    } else {
-      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    // Check if user already exists
+    if (users.has(mobileNumber)) {
+      sendError(res, 400, 'USER_EXISTS', 'User with this mobile number already exists');
+      return;
     }
+
+    // Create new user
+    const farmerId = uuidv4();
+    const userData = { 
+      id: farmerId, 
+      mobileNumber,
+      password,
+      name: '',
+      preferredLang: 'en',
+      village: '',
+      district: '',
+      state: '',
+      landSizeAcres: 0
+    };
+    users.set(mobileNumber, userData);
+    usersById.set(farmerId, userData);
+
+    // Save to persistent storage
+    saveUsers(users, usersById);
+
+    // Issue JWT tokens
+    const accessToken = jwt.sign({ sub: farmerId }, config.jwtSecret, { expiresIn: '1h' });
+    const refreshToken = uuidv4();
+    refreshTokens.set(farmerId, refreshToken);
+    saveRefreshTokens(refreshTokens);
+
+    sendSuccess(res, { accessToken, refreshToken, farmerId });
+  } catch (err) {
+    console.error('Registration error:', err);
+    sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
   }
 });
 
 /**
- * POST /api/v1/auth/verify-otp
- * Body: { mobileNumber: string, otp: string }
- * Verifies the OTP and returns access + refresh tokens.
+ * POST /api/v1/auth/login
+ * Body: { mobileNumber: string, password: string }
+ * Login with mobile and password
  */
-router.post('/verify-otp', async (req: Request, res: Response) => {
-  const { mobileNumber, otp } = req.body as { mobileNumber?: string; otp?: string };
+router.post('/login', async (req: Request, res: Response) => {
+  const { mobileNumber, password } = req.body as { mobileNumber?: string; password?: string };
 
-  if (!mobileNumber || !otp) {
-    sendError(res, 400, 'VALIDATION_ERROR', 'mobileNumber and otp are required');
+  if (!mobileNumber || !password) {
+    sendError(res, 400, 'VALIDATION_ERROR', 'mobileNumber and password are required');
     return;
   }
 
   try {
-    const result = await verifyOtp(mobileNumber, otp);
-    sendSuccess(res, result);
-  } catch (err) {
-    if (err instanceof AppError && err.code === 'INVALID_OTP') {
-      sendError(res, 401, err.code, err.message);
-    } else if (err instanceof AppError) {
-      sendError(res, 400, err.code, err.message);
-    } else {
-      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    // Find user
+    const user = users.get(mobileNumber);
+    
+    if (!user || user.password !== password) {
+      sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid mobile number or password');
+      return;
     }
+
+    // Issue JWT tokens
+    const accessToken = jwt.sign({ sub: user.id }, config.jwtSecret, { expiresIn: '1h' });
+    const refreshToken = uuidv4();
+    refreshTokens.set(user.id, refreshToken);
+    saveRefreshTokens(refreshTokens);
+    
+    // Ensure usersById is also populated (in case user was created before this change)
+    if (!usersById.has(user.id)) {
+      usersById.set(user.id, user);
+      saveUsers(users, usersById);
+    }
+
+    sendSuccess(res, { accessToken, refreshToken, farmerId: user.id });
+  } catch (err) {
+    console.error('Login error:', err);
+    sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
   }
 });
 
 /**
  * POST /api/v1/auth/refresh
  * Body: { farmerId: string, refreshToken: string }
- * Validates the refresh token from Redis and issues a new access token.
+ * Validates the refresh token and issues a new access token.
  */
 router.post('/refresh', async (req: Request, res: Response) => {
   const { farmerId, refreshToken } = req.body as { farmerId?: string; refreshToken?: string };
@@ -83,8 +136,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
   }
 
   try {
-    const redis = getRedis();
-    const stored = await redis.get(`refresh:${farmerId}`);
+    const stored = refreshTokens.get(farmerId);
 
     if (!stored || stored !== refreshToken) {
       sendError(res, 401, 'INVALID_REFRESH_TOKEN', 'Refresh token is invalid or has expired');
@@ -96,8 +148,8 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
     // Rotate refresh token
     const newRefreshToken = uuidv4();
-    const thirtyDaysInSeconds = 30 * 24 * 60 * 60;
-    await redis.set(`refresh:${farmerId}`, newRefreshToken, 'EX', thirtyDaysInSeconds);
+    refreshTokens.set(farmerId, newRefreshToken);
+    saveRefreshTokens(refreshTokens);
 
     sendSuccess(res, { accessToken, refreshToken: newRefreshToken, farmerId });
   } catch (err) {
@@ -107,7 +159,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/auth/logout  (protected — expects req.farmerId set by auth middleware)
- * Deletes the refresh token from Redis.
+ * Deletes the refresh token.
  */
 router.post('/logout', async (req: Request, res: Response) => {
   // farmerId is expected to be attached by the JWT auth middleware
@@ -119,8 +171,7 @@ router.post('/logout', async (req: Request, res: Response) => {
   }
 
   try {
-    const redis = getRedis();
-    await redis.del(`refresh:${farmerId}`);
+    refreshTokens.delete(farmerId);
     sendSuccess(res, { message: 'Logged out successfully' });
   } catch (err) {
     sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');

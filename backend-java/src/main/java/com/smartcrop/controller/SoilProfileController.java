@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -18,6 +19,14 @@ import java.util.UUID;
 public class SoilProfileController {
 
     private final SoilProfileService soilProfileService;
+
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<SoilProfileResponse>>> list(Authentication auth) {
+        UUID farmerId = UUID.fromString(auth.getName());
+        List<SoilProfileResponse> profiles = soilProfileService.listByFarmer(farmerId)
+            .stream().map(SoilProfileResponse::from).toList();
+        return ResponseEntity.ok(ApiResponse.success(profiles));
+    }
 
     @PostMapping
     public ResponseEntity<ApiResponse<SoilProfileResponse>> create(

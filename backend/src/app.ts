@@ -57,7 +57,7 @@ export function createApp(): express.Application {
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
+    sendSuccess(res, { status: 'ok' });
   });
 
   // ── 6. JWT authentication for all routes below ───────────────────────────────
@@ -74,21 +74,41 @@ export function createApp(): express.Application {
   // feedbackRouter handles both /feedback and /dashboard/reports
   app.use('/api/v1', feedbackRouter);
 
-  // ── Farmers profile routes (inline) ─────────────────────────────────────────
+  // ── Farmers profile routes (inline) - In-memory storage for development ─────
   app.get('/api/v1/farmers/me', async (req: Request, res: Response) => {
     if (!req.farmerId) {
       sendError(res, 401, 'UNAUTHORIZED', 'Authentication required');
       return;
     }
     try {
-      const profile = await getFarmerProfile(req.farmerId);
-      sendSuccess(res, profile);
-    } catch (err) {
-      if (err instanceof AppError && err.code === 'NOT_FOUND') {
-        sendError(res, 404, 'NOT_FOUND', 'Farmer profile not found');
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+      // Try to get from database first, fall back to in-memory users map from auth
+      try {
+        const profile = await getFarmerProfile(req.farmerId);
+        sendSuccess(res, profile);
+      } catch (dbErr) {
+        // Database not available - use in-memory data from registration
+        const authModule = require('./routes/auth');
+        const user = authModule.usersById.get(req.farmerId);
+        if (!user) {
+          sendError(res, 404, 'NOT_FOUND', 'Farmer profile not found');
+          return;
+        }
+        // Return basic profile from in-memory user data
+        sendSuccess(res, {
+          id: req.farmerId,
+          mobileNumber: user.mobileNumber,
+          name: user.name || '',
+          preferredLang: user.preferredLang || 'en',
+          village: user.village || '',
+          district: user.district || '',
+          state: user.state || '',
+          landSizeAcres: user.landSizeAcres || 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
       }
+    } catch (err) {
+      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
     }
   });
 
@@ -98,16 +118,45 @@ export function createApp(): express.Application {
       return;
     }
     try {
-      const updated = await updateFarmerProfile(req.farmerId, req.body);
-      sendSuccess(res, updated);
-    } catch (err) {
-      if (err instanceof AppError && err.code === 'NOT_FOUND') {
-        sendError(res, 404, 'NOT_FOUND', 'Farmer profile not found');
-      } else if (err instanceof AppError) {
-        sendError(res, 400, err.code, err.message, err.field);
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+      // Try database first, fall back to in-memory
+      try {
+        const updated = await updateFarmerProfile(req.farmerId, req.body);
+        sendSuccess(res, updated);
+      } catch (dbErr) {
+        // Database not available - update in-memory user data
+        const authModule = require('./routes/auth');
+        const { saveUsers } = require('./storage');
+        const user = authModule.usersById.get(req.farmerId);
+        if (!user) {
+          sendError(res, 404, 'NOT_FOUND', 'Farmer profile not found');
+          return;
+        }
+        // Update in-memory user data
+        if (req.body.name !== undefined) user.name = req.body.name;
+        if (req.body.preferredLang !== undefined) user.preferredLang = req.body.preferredLang;
+        if (req.body.village !== undefined) user.village = req.body.village;
+        if (req.body.district !== undefined) user.district = req.body.district;
+        if (req.body.state !== undefined) user.state = req.body.state;
+        if (req.body.landSizeAcres !== undefined) user.landSizeAcres = req.body.landSizeAcres;
+        
+        // Save to persistent storage
+        saveUsers(authModule.users, authModule.usersById);
+        
+        sendSuccess(res, {
+          id: req.farmerId,
+          mobileNumber: user.mobileNumber,
+          name: user.name || '',
+          preferredLang: user.preferredLang || 'en',
+          village: user.village || '',
+          district: user.district || '',
+          state: user.state || '',
+          landSizeAcres: user.landSizeAcres || 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
       }
+    } catch (err) {
+      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
     }
   });
 

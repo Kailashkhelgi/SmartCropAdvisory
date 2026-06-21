@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -44,6 +45,10 @@ public class SoilProfileService {
     public SoilProfile get(UUID profileId, UUID farmerId) {
         return soilProfileRepository.findByIdAndFarmerId(profileId, farmerId)
             .orElseThrow(() -> AppException.notFound("Soil profile not found"));
+    }
+
+    public List<SoilProfile> listByFarmer(UUID farmerId) {
+        return soilProfileRepository.findAllByFarmerId(farmerId);
     }
 
     @Transactional
