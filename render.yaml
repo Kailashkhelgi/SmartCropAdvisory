@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: smart-crop-advisory-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: smart-crop-db
+          property: connectionString
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 1h
+      - key: REFRESH_TOKEN_EXPIRES_IN
+        value: 30d
+      - key: OPENWEATHERMAP_API_KEY
+        value: a0b7d56f2f43e276632482dbfe423a58
+      - key: MARKET_PRICE_API_URL
+        value: https://api.agmarknet.gov.in
+      - key: MARKET_PRICE_API_KEY
+        value: dev_market_key
+      - key: GOOGLE_CLOUD_API_KEY
+        value: dev_google_key
+      - key: FCM_SERVER_KEY
+        value: dev_fcm_key
+      - key: ADVISORY_ENGINE_URL
+        value: http://localhost:8001
+      - key: VISION_ENGINE_URL
+        value: http://localhost:8002
+
+databases:
+  - name: smart-crop-db
+    plan: free
