@@ -204,9 +204,10 @@ function LandingPage({ navigate, onLoginSuccess }: { navigate: (p: string) => vo
     if (authTab === 'register' && password !== confirm) { setAuthError('Passwords do not match.'); return; }
     setAuthLoading(true);
     try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
       const url = authTab === 'login'
-        ? 'http://localhost:3000/api/v1/auth/login'
-        : 'http://localhost:3000/api/v1/auth/register';
+        ? `${baseUrl}/auth/login`
+        : `${baseUrl}/auth/register`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
